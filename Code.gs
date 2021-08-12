@@ -1,28 +1,19 @@
 // CONSTANTS
 // Important: convert every number to string before sending request
-const APP_NAME = "Facebook Post Commentor Tool";
-const DOCUMENT_PROPERTIES = PropertiesService.getDocumentProperties();
+const APP_NAME = "FacebookCT";
 const encodedCol = {
   'POST_URL':1,
   'COMMENT':2,
-  'HAS_DELETE_COMMENT_TIMER':3,
-  'TIMER_DATE_TIME':4,
-  'STATUS':5
+  'DELAY':3,
+  'STATUS':4
 };
-const statusEnum = {
-  "COMMENTING":"Making comment",  // when the tool is waiting for resulting comment url from content script 
-  "PENDING_DELETE":"Scheduled for deleting", // when comment url is valid but already scheduled to delete
-  "DELETED":"Deleted"
-}
 const colorEnum = {
   "WARNING": '#FFA500',
   "ERROR":'#f00',
   "OK":'#0f0',
   'INFO':'#fff'
 }
-const keyEnum = {
-  "EMAIL":"EMAIL"
-}
+var DEFAULT_DELAY = 60;  // (sec) const in each batch, yet can be modified otherwise
 
 // METHODS
 
@@ -33,7 +24,7 @@ function createMenu(){
   var ui = SpreadsheetApp.getUi();
     ui.createMenu(APP_NAME)
     .addItem('Run Selection', 'work')
-    .addItem('Delete all triggers', 'deleteProjectTriggers')
+    .addItem('Set default delay', 'setDefaultDelay')
     .addToUi();
 }
 function getSheet(){
@@ -56,32 +47,27 @@ function isValidPostUrl(url){
  * output: boolean indicating any entry is invalid
  */
 function isValid(row){
-  return  row.length==encodedCol.TIMER_DATE_TIME && 
+  return  row.length==encodedCol.DELAY && 
           isValidPostUrl(row[encodedCol.POST_URL-1]) &&
-          row[encodedCol.COMMENT-1].trim()!='' &&
-          (row[encodedCol.HAS_DELETE_COMMENT_TIMER-1]===false || (row[encodedCol.HAS_DELETE_COMMENT_TIMER-1] === true && typeof(row[encodedCol.TIMER_DATE_TIME-1].getUTCFullYear)==='function' && timeSubtract(row[encodedCol.TIMER_DATE_TIME-1],new Date())>=0))
-}
-/** 
- * Perform d1 sub d2 from year to month, to ... to minutes
- * input: d1, d2 of type Date
- * output: milliseconds from d1 to d2
- */
-function timeSubtract(d1, d2){
-  let utc1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate(), d1.getUTCHours(), d1.getMinutes());
-  let utc2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate(), d2.getUTCHours(), d2.getMinutes());
-  return utc1 - utc2;
+          row[encodedCol.COMMENT-1].trim()!='' && 
+          row[encodedCol.DELAY-1]>=0
 }
 /**
  * Pass parameters to HTML template and render to client as dialog
  */
-function showWork(urlsList, paramsList){
+function showWork(args){
   let template = HtmlService.createTemplateFromFile('dialog');
-  template.args = JSON.stringify([urlsList, paramsList]);
+  template.args = JSON.stringify(args);
   let ui = template.evaluate();
-  SpreadsheetApp.getUi().showModalDialog(ui,'Tasks list');
+  SpreadsheetApp.getUi().showSidebar(ui);
+  // SpreadsheetApp.getUi().showModalDialog(ui,'Tasks list');
 }
+/**
+ * Replaces all escaped '\n' to the new line feed properly.
+ * Returns the new working string.
+ */
 function expand(text){
-  return text.replaceAll('|','\n');
+  return text.replace('\\n','\n');  
 }
 /**
  * Entry method to call from UI.
@@ -93,9 +79,9 @@ function work(){
   let j = range.getLastRow();
   console.log(`Executing rows from [${i},${j}]`);
   resetPreviousWork(i,j);   // resets previous work on the selection
-  urlsList = [], paramsList = [];
+  urlsList = [], paramsList = [], delaysList = [];
   while(i<=j){  // for each selected row
-    let row = sheet.getRange(i,encodedCol.POST_URL,1,encodedCol.TIMER_DATE_TIME).getValues()[0];  // gets data row
+    let row = sheet.getRange(i,encodedCol.POST_URL,1,encodedCol.DELAY).getValues()[0];  // gets data row
     console.log(i,row);
     if(!isValid(row)){
       console.log('Row contains invalid data');
@@ -103,21 +89,23 @@ function work(){
       ++i;
       continue;
     }
-    // sets up parameters
-    let params = {};  // initializes parameter object
-    params.comment = expand(row[encodedCol.COMMENT-1]);
-    params.row = i;
-    if(row[encodedCol.HAS_DELETE_COMMENT_TIMER-1] === true){  // checks if has timer is ticked
-      let timer = row[encodedCol.TIMER_DATE_TIME-1];  // gets timer's date time
-      let now = new Date();   // gets current date time
-      params.timeout = timeSubtract(timer,now);   // sets timeout of miliseconds from now to timer's date time
+    // fill defaults
+    if(row[encodedCol.DELAY-1]==''){
+      getSheet().getDataRange().getCell(i,encodedCol.DELAY).setValue(DEFAULT_DELAY);
+      row[encodedCol.DELAY-1] = DEFAULT_DELAY;
     }
+    // sets up parameters
+    let params = {
+      'comment': expand(row[encodedCol.COMMENT-1]),
+      'row':i
+    };  
     urlsList.push(row[encodedCol.POST_URL-1]);
     paramsList.push(params);
+    delaysList.push(row[encodedCol.DELAY-1]);
     ++i;  // next row
   }
-  console.log(urlsList, paramsList);
-  showWork(urlsList, paramsList);
+  console.log(urlsList, paramsList, delaysList);
+  showWork([urlsList, paramsList, delaysList]);
 }
 
 function isCellNotEmpty(row,col){
@@ -131,6 +119,9 @@ function isResultReady(row){
 }
 function setStatusValue(row,val,c=colorEnum.INFO){
   getSheet().getRange(row,encodedCol.STATUS).setValue(val).setBackground(c);
+}
+function getStatusValue(row){
+  return getSheet().getRange(row,encodedCol.STATUS).getValue();
 }
 function setNote(row,col,msg,c=colorEnum.INFO){
   getSheet().getRange(row,col).setNote(msg).setBackground(c);
@@ -207,7 +198,17 @@ function deleteProjectTriggers(){
     ScriptApp.deleteTrigger(trigger);
   }
 }
+function setDefaultDelay(){
+  try{
+    let cell = getSheet().getActiveCell();  // gets the active cell
+    let delay = Integer.parseInt(cell.getValue());  // gets delay value from sheet
+    DEFAULT_DELAY = delay;
+    setNote(cell.getRow(),cell.getColumn(),`Default delay duration is set to ${delay} seconds.`,colorEnum.OK);
+  } catch(e){
+    setNote(cell.getRow(),cell.getColumn(),'Expected an positive integer for delay duration (seconds).',colorEnum.ERROR);
+  }
 
+}
 
 
 
@@ -291,5 +292,7 @@ function demo(){
   // ''];
   // console.log(row,isValid(row))
   // setNote(10,3,'hi')
-  deleteProjectTriggers();
+  let content = getSheet().getActiveCell().getValue();
+  console.log(content);
+  console.log(content.replace('\\n','\n'))
 }

@@ -26,21 +26,37 @@
       button:hover{
         cursor:pointer;
       }
+      p{
+        font-style:'italic'
+      }
+      .hidden{
+        display:none;
+      }
+      .d-flex{
+        display:flex;
+        justify-content:space-between;
+      }
     </style>
 
   </head>
   <body>
+    <p id="status">Ready to start!</p>
+    <div class="d-flex">
+      <button id="startBtn">Start</button>
+      <button onclick="google.script.host.close()">Stop</button>
+    </div>
+    <div id="tableDiv">
+      <p>Show links</p>
+    </div>
   <script>
-  let [urlsList, paramsList] = JSON.parse(<?= args?>);
-  console.log(urlsList, paramsList);
+  let [urlsList, paramsList, delaysList] = JSON.parse(<?= args?>);
+  console.log(urlsList, paramsList, delaysList);
   let createAnchor = function(url,text){
     let elm = document.createElement('a');
     elm.href = url;
     elm.innerText = text;
     return elm;
   }
-  // TODO: embeding params to facebook URLs won't work 
-  // because they won't remove it automatically.
   // Send the params straight to extension
   let createUrlParams = function(paramDict){
     q = new URLSearchParams();
@@ -49,66 +65,152 @@
     }
     return q.toString();
   }
+  // create work table
+  let tableDiv = document.querySelector('#tableDiv'); // gets the div container for new table element
   let tableElm = document.createElement('table');
   tableElm.style.width="100%";
   tableElm.style.borderCollapse="collapse";
-  document.body.appendChild(tableElm);
   let anchors = [];
-  // create table element content
+  /**
+   *  create table element content
+   */
   for(let i = 0; i<paramsList.length; ++i){
     let rowElm = document.createElement('tr');
     rowElm.style.borderBottom = '1px solid gray';
     let data = [document.createElement('td'),document.createElement('td')]
+    // let data = [document.createElement('td')];
     let url = urlsList[i];
     let urlParams = paramsList[i]
-    let anchorElm = createAnchor([url,createUrlParams(urlParams)].join('?'),`Link #${i+1}`);
+    let anchorElm = createAnchor(url,`Task #${i+1}`);
     anchors.push(anchorElm);
-    data[0].innerHTML = anchorElm.outerHTML;
-    data[1].innerHTML = "<i>Waiting..</i>";
-    rowElm.innerHTML = data.map(x=>x.outerHTML).join('');
-    tableElm.innerHTML += rowElm.outerHTML;
+    data[0].appendChild(anchorElm);
+    data[1].appendChild(document.createElement('i'));
+    for(let k = 0; k<data.length; ++k){
+      rowElm.appendChild(data[k]);
+    }
+    // tableElm.innerHTML += rowElm.outerHTML;
+    tableElm.appendChild(rowElm);
+  }
+  // document.body.appendChild(tableElm);
+  tableDiv.appendChild(tableElm);
+  tableDiv.firstElementChild.onclick = ()=>{
+    tableElm.classList.toggle('hidden');  // toggle the hidden class of the table element
+  }
+  /**
+   * Sets the HTML content of the `td` element in the same row as the link indx
+   */
+  let setLinkStatus = function(indx, status){
+    document.querySelector(`table tr:nth-child(${indx+1}) > td:last-child`).innerHTML = status;
+  }
+  /**
+   * defining mechanism
+   */
+  /**
+   * Method to post a comment from post url at row number `row`.
+   * Generate post link -> wait until status updated -> end
+   * Returns: comment URL
+   */
+  let postCommentAsync = function(indx){
+    let TAG = 'postCommentAsync';
+    return new Promise((resolve,reject)=>{
+      console.log(indx);  // debugging input
+      let params = paramsList[indx];
+      let url = urlsList[indx]+'?'+createUrlParams(params);
+      let a = anchors[indx];
+      console.log(url,a);   // debugging
+      a.href = url;
+      a.click();
+      let t = setInterval(async ()=>{
+        let val = await getStatusAtRowAsync(params.row);
+        console.log(TAG+'_getStatusAtRow',val);   // debugging
+        if(val!=''){  // checks if status is not empty
+          clearInterval(t);
+          resolve(val);   // returns comment url
+        }
+      },100);
+    });
+  }
+  let waitAsync = sec=>new Promise(resolve=>setTimeout(resolve,sec*1000));
+  /**
+   * Calls GAS API to get status value at row `row` (1-indexed)
+   * Returns: status value at row `row`
+   */
+  let getStatusAtRowAsync = function(row){
+    return new Promise(resolve=>{
+      google.script.run.withSuccessHandler(resolve).getStatusValue(row);
+    });
+  }
+  /**
+   * Method to delete a comment URL at row number `row`
+   * Generate delete URL from comment URL -> wait until status updated -> end.
+   * Params: url: comment URL
+   *         row: row number for this comment URL
+   */
+  let deleteCommentAsync = function(url, indx){
+    let TAG = 'deleteCommentAsync';
+    return new Promise((resolve,reject)=>{
+      console.log(TAG,url,indx); // debugging input
+      let params = {
+        facebookct:true,
+        row:paramsList[indx].row
+      }
+      let deleteUrl = url+'&'+createUrlParams(params);
+      let a = anchors[indx];
+      console.log(TAG,deleteUrl,a); // debugging
+      a.href = deleteUrl;
+      a.click();
+      let t = setInterval(async ()=>{
+        let val = await getStatusAtRowAsync(params.row);
+        console.log(TAG+'_getStatusAtRow',val);   // debugging
+        if(val==''){  // checks if status is empty
+          clearInterval(t);
+          resolve();  // returns result
+        }
+      },100);
+    });
   }
   // console.log(anchors);
   // click and wait for result handler
-  let processAnchorAt = function(indx){
-    if(indx>=anchors.length){
-      console.log("Tasks done!");
-      google.script.host.close();   // close the dialog
-      return;
-    }
-    // setTimeout(function(){  // waits `delay` miliseconds before executing
-      let start = new Date(); // sets start time
-      anchors[indx].click();
-      let t = setInterval(function(){
-        google.script.run.withSuccessHandler(function(res){
-          if(res){  // checks if we have received the result from content script
-            clearInterval(t);
-            tableElm.children[indx].querySelector('td:last-child').innerText = "Done";  // sets anchor's status at index `indx` to "Done"
-            console.log(`Anchor #${indx} lock state:`,anchors[indx].locked)
-            if(anchors[indx].locked==undefined){  // checks if not locked
-              anchors[indx].locked = true;  // sets async lock
-            } else{ // checks if anchor is locked
-              return;   // stops here
-            }
-            let elapsed = new Date()-start; // measures elapsed time
-            let delay = 0;  // sets default delay time (ms)
-            if(elapsed<=1000){
-              delay = 1000-elapsed; // sets delay to the rest of 1 sec
-            }
-            console.log('Next task will start after ',delay); // debugging
-            setTimeout(()=>processAnchorAt(indx+1),delay);
-            // processAnchorAt(indx+1);  // recursion
-          } else{
-            console.log(`Link #${indx+1}:Result not ready. Waiting..`);
-          }
-        }).isResultReady(paramsList[indx].row);
-      }, 100);
-    // },3000);  // somewhat prevents overclicking
+  // let processAnchorAt = async function(indx){
+  //   let commentUrl = await postCommentAsync(indx);
+  //   console.log('delaying',delaysList[indx]);
+  //   await waitAsync(delaysList[indx]);
+  //   await deleteCommentAsync(commentUrl,indx);
+  //   // processAnchorAt((indx+1)%anchors.length);
+  // }
+  let setWorkStatus = function(status){
+    let statusElm = document.querySelector('#status');
+    statusElm.innerHTML = status;
   }
-  let btnElm = document.createElement('button');
-  btnElm.innerText = "Start";
-  btnElm.onclick = function(){processAnchorAt(0);};
-  document.body.insertBefore(btnElm,tableElm);
+  let btnElm = document.querySelector('#startBtn');
+  btnElm.onclick = async function(){ 
+      // await processAnchorAt(0);
+      setWorkStatus('Work started');
+      let postUrls = [];
+      let n = anchors.length;
+      setWorkStatus('Phase 1: Posting all URLs..');
+      for(let i = 0; i<n; ++i){
+        setLinkStatus(i,'posting..');
+        let commentUrl = await postCommentAsync(i);
+        postUrls.push(commentUrl);
+        setLinkStatus(i,'');
+      }
+      console.log(postUrls);  // debugging
+      let i = 0;
+      setWorkStatus('Phase 2: Keep deleting & re-posting circly..');
+      while(true){
+        setLinkStatus(i,'deleting..');
+        await deleteCommentAsync(postUrls[i],i);
+        setLinkStatus(i,`delaying ${delaysList[i]} seconds`);
+        console.log('delaying',delaysList[i],'seconds..');
+        await waitAsync(delaysList[i]);
+        setLinkStatus(i,'posting..');
+        postUrls[i] = await postCommentAsync(i);
+        setLinkStatus(i,'');
+        console.log(postUrls);  // debugging
+        i = (i+1)%n;
+      }
+    };
   </script>
   </body>
 </html>

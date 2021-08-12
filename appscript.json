@@ -1,16 +1,14 @@
 {
-    "timeZone": "Asia/Ho_Chi_Minh",
-    "dependencies": {},
-    "exceptionLogging": "STACKDRIVER",
-    "runtimeVersion": "V8",
-    "executionApi": {
-      "access": "ANYONE"
-    },
-    "oauthScopes": [
-      "https://www.googleapis.com/auth/script.scriptapp",
-      "https://www.googleapis.com/auth/script.send_mail",
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/script.container.ui",
-      "https://www.googleapis.com/auth/userinfo.email"
-    ]
-  }
+  "timeZone": "Asia/Ho_Chi_Minh",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/script.container.ui"
+  ],
+  "executionApi": {
+    "access": "ANYONE"
+  },
+  "runtimeVersion": "V8"
+}
