@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_blank">
+    <style>
+      body{
+        font-size:1.4rem;
+        line-height:1.5rem;
+      }
+      table{
+        border-collapse:collapse;
+        border-top:6px;
+      }
+      tr{
+        border-bottom:1px solid gray;
+      }
+      button{
+        padding:5px 12px;
+        background-color:blue;
+        color:white;
+        border:none;
+        font-size:1.2rem;
+        position:relative;
+        right:0;
+      }
+      button:hover{
+        cursor:pointer;
+      }
+    </style>
+
+  </head>
+  <body>
+  <script>
+  let [urlsList, paramsList] = JSON.parse(<?= args?>);
+  console.log(urlsList, paramsList);
+  let createAnchor = function(url,text){
+    let elm = document.createElement('a');
+    elm.href = url;
+    elm.innerText = text;
+    return elm;
+  }
+  // TODO: embeding params to facebook URLs won't work 
+  // because they won't remove it automatically.
+  // Send the params straight to extension
+  let createUrlParams = function(paramDict){
+    q = new URLSearchParams();
+    for(let key in paramDict){
+      q.append(key,paramDict[key]);   // `append` automatically encode the value to URI component
+    }
+    return q.toString();
+  }
+  let tableElm = document.createElement('table');
+  tableElm.style.width="100%";
+  tableElm.style.borderCollapse="collapse";
+  document.body.appendChild(tableElm);
+  let anchors = [];
+  // create table element content
+  for(let i = 0; i<paramsList.length; ++i){
+    let rowElm = document.createElement('tr');
+    rowElm.style.borderBottom = '1px solid gray';
+    let data = [document.createElement('td'),document.createElement('td')]
+    let url = urlsList[i];
+    let urlParams = paramsList[i]
+    let anchorElm = createAnchor([url,createUrlParams(urlParams)].join('?'),`Link #${i+1}`);
+    anchors.push(anchorElm);
+    data[0].innerHTML = anchorElm.outerHTML;
+    data[1].innerHTML = "<i>Waiting..</i>";
+    rowElm.innerHTML = data.map(x=>x.outerHTML).join('');
+    tableElm.innerHTML += rowElm.outerHTML;
+  }
+  // console.log(anchors);
+  // click and wait for result handler
+  let processAnchorAt = function(indx){
+    if(indx>=anchors.length){
+      console.log("Tasks done!");
+      google.script.host.close();   // close the dialog
+      return;
+    }
+    // setTimeout(function(){  // waits `delay` miliseconds before executing
+      let start = new Date(); // sets start time
+      anchors[indx].click();
+      let t = setInterval(function(){
+        google.script.run.withSuccessHandler(function(res){
+          if(res){  // checks if we have received the result from content script
+            clearInterval(t);
+            tableElm.children[indx].querySelector('td:last-child').innerText = "Done";  // sets anchor's status at index `indx` to "Done"
+            console.log(`Anchor #${indx} lock state:`,anchors[indx].locked)
+            if(anchors[indx].locked==undefined){  // checks if not locked
+              anchors[indx].locked = true;  // sets async lock
+            } else{ // checks if anchor is locked
+              return;   // stops here
+            }
+            let elapsed = new Date()-start; // measures elapsed time
+            let delay = 0;  // sets default delay time (ms)
+            if(elapsed<=1000){
+              delay = 1000-elapsed; // sets delay to the rest of 1 sec
+            }
+            console.log('Next task will start after ',delay); // debugging
+            setTimeout(()=>processAnchorAt(indx+1),delay);
+            // processAnchorAt(indx+1);  // recursion
+          } else{
+            console.log(`Link #${indx+1}:Result not ready. Waiting..`);
+          }
+        }).isResultReady(paramsList[indx].row);
+      }, 100);
+    // },3000);  // somewhat prevents overclicking
+  }
+  let btnElm = document.createElement('button');
+  btnElm.innerText = "Start";
+  btnElm.onclick = function(){processAnchorAt(0);};
+  document.body.insertBefore(btnElm,tableElm);
+  </script>
+  </body>
+</html>
